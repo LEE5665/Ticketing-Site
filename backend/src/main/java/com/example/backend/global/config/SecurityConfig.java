@@ -1,20 +1,28 @@
 package com.example.backend.global.config;
 
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.util.List;
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import java.util.List;
 
 @Configuration
 public class SecurityConfig {
@@ -23,9 +31,15 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http
     ) throws Exception {
+        SpaCsrfTokenRequestHandler requestHandler = new SpaCsrfTokenRequestHandler();
+
         http
                 .cors(Customizer.withDefaults())
-                .csrf(Customizer.withDefaults())
+                .csrf(csrf -> csrf
+                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                        .csrfTokenRequestHandler(requestHandler)
+                )
+                .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
                 .requestCache(AbstractHttpConfigurer::disable)
                 .formLogin(form -> form
                         .loginProcessingUrl("/api/auth/login")
@@ -45,7 +59,8 @@ public class SecurityConfig {
                                 HttpMethod.GET,
                                 "/api/csrf",
                                 "/api/performances",
-                                "/api/performances/**"
+                                "/api/performances/**",
+                                "/api/schedules/**"
                         ).permitAll()
                         .requestMatchers(
                                 HttpMethod.POST,
@@ -74,7 +89,7 @@ public class SecurityConfig {
                 List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
         );
         config.setAllowedHeaders(
-                List.of("Content-Type", "X-CSRF-TOKEN")
+                List.of("Content-Type", "X-XSRF-TOKEN", "X-CSRF-TOKEN")
         );
         config.setAllowCredentials(true);
 
@@ -91,5 +106,39 @@ public class SecurityConfig {
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
         response.getWriter().write("{\"message\":\"" + message + "\"}");
+    }
+
+    private static final class SpaCsrfTokenRequestHandler extends CsrfTokenRequestAttributeHandler {
+        SpaCsrfTokenRequestHandler() {
+            setCsrfRequestAttributeName(null);
+        }
+
+        @Override
+        public String resolveCsrfTokenValue(HttpServletRequest request, CsrfToken csrfToken) {
+            String token = request.getHeader("X-XSRF-TOKEN");
+            if (token != null && !token.isBlank()) {
+                return token;
+            }
+            token = request.getHeader("X-CSRF-TOKEN");
+            if (token != null && !token.isBlank()) {
+                return token;
+            }
+            return super.resolveCsrfTokenValue(request, csrfToken);
+        }
+    }
+
+    private static final class CsrfCookieFilter extends OncePerRequestFilter {
+        @Override
+        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+                throws ServletException, IOException {
+            CsrfToken csrfToken = (CsrfToken) request.getAttribute(CsrfToken.class.getName());
+            if (csrfToken == null) {
+                csrfToken = (CsrfToken) request.getAttribute("_csrf");
+            }
+            if (csrfToken != null) {
+                csrfToken.getToken();
+            }
+            filterChain.doFilter(request, response);
+        }
     }
 }

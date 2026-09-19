@@ -2,6 +2,7 @@ package com.example.backend;
 
 import com.example.backend.member.repository.MemberRepository;
 import com.jayway.jsonpath.JsonPath;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -30,21 +32,29 @@ class AuthIntegrationTests {
     @BeforeEach
     void clearMembers() { members.deleteAll(); }
 
-    record Token(MockHttpSession session, String value) {}
+    record Token(MockHttpSession session, Cookie cookie, String value) {
+        MockHttpServletRequestBuilder apply(MockHttpServletRequestBuilder builder) {
+            if (session != null) builder.session(session);
+            if (cookie != null) builder.cookie(cookie);
+            if (value != null) builder.header("X-XSRF-TOKEN", value);
+            return builder;
+        }
+    }
 
     private Token csrf(MockHttpSession session) throws Exception {
         var request = get("/api/csrf");
         if (session != null) request.session(session);
         var result = mvc.perform(request).andExpect(status().isOk())
-                .andExpect(jsonPath("$.headerName").value("X-CSRF-TOKEN"))
+                .andExpect(jsonPath("$.headerName").value("X-XSRF-TOKEN"))
                 .andReturn();
+        Cookie cookie = result.getResponse().getCookie("XSRF-TOKEN");
         return new Token((MockHttpSession) result.getRequest().getSession(),
+                cookie,
                 JsonPath.read(result.getResponse().getContentAsString(), "$.token"));
     }
 
     private void signup(Token token) throws Exception {
-        mvc.perform(post("/api/members").session(token.session())
-                        .header("X-CSRF-TOKEN", token.value())
+        mvc.perform(token.apply(post("/api/members"))
                         .contentType(MediaType.APPLICATION_JSON).content(SIGNUP))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").isNumber())
                 .andExpect(jsonPath("$.password").doesNotExist());
@@ -61,24 +71,31 @@ class AuthIntegrationTests {
         mvc.perform(get("/api/auth/me").session(token.session()))
                 .andExpect(status().isUnauthorized());
         String anonymousSessionId = token.session().getId();
-        mvc.perform(post("/api/auth/login").session(token.session())
-                        .header("X-CSRF-TOKEN", token.value())
+
+        var loginResult = mvc.perform(token.apply(post("/api/auth/login"))
                         .param("email", "MEMBER@example.com").param("password", "password123!"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isNoContent())
+                .andReturn();
         assertThat(token.session().getId()).isNotEqualTo(anonymousSessionId);
+
+        Cookie rotatedCookie = loginResult.getResponse().getCookie("XSRF-TOKEN");
+        assertThat(rotatedCookie).isNotNull();
+        assertThat(rotatedCookie.getValue()).isNotEqualTo(token.value());
+
         mvc.perform(get("/api/auth/me").session(token.session()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.email").value("member@example.com"))
                 .andExpect(jsonPath("$.name").value("테스트 회원"))
                 .andExpect(jsonPath("$.password").doesNotExist());
 
-        // Authentication rotates the CSRF token. The old one must fail.
+        // Authentication rotates the CSRF token. The old one must fail against the rotated cookie.
         mvc.perform(post("/api/auth/logout").session(token.session())
-                        .header("X-CSRF-TOKEN", token.value()))
+                        .cookie(rotatedCookie)
+                        .header("X-XSRF-TOKEN", token.value()))
                 .andExpect(status().isForbidden());
+
         Token loggedIn = csrf(token.session());
-        mvc.perform(post("/api/auth/logout").session(loggedIn.session())
-                        .header("X-CSRF-TOKEN", loggedIn.value()))
+        mvc.perform(loggedIn.apply(post("/api/auth/logout")))
                 .andExpect(status().isNoContent());
         assertThat(loggedIn.session().isInvalid()).isTrue();
         mvc.perform(get("/api/auth/me")).andExpect(status().isUnauthorized());
@@ -89,16 +106,14 @@ class AuthIntegrationTests {
     void rejectsDuplicateInvalidAndOversizedSignup() throws Exception {
         Token token = csrf(null);
         signup(token);
-        mvc.perform(post("/api/members").session(token.session())
-                        .header("X-CSRF-TOKEN", token.value())
+        mvc.perform(token.apply(post("/api/members"))
                         .contentType(MediaType.APPLICATION_JSON).content(SIGNUP))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.message").isString());
         for (String body : new String[]{
                 "{\"name\":\" \",\"email\":\"bad\",\"password\":\"short\"}",
                 "{\"name\":\"회원\",\"email\":\"other@example.com\",\"password\":\"" + "가".repeat(25) + "\"}"
         }) {
-            mvc.perform(post("/api/members").session(token.session())
-                            .header("X-CSRF-TOKEN", token.value())
+            mvc.perform(token.apply(post("/api/members"))
                             .contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isString());
         }
@@ -113,8 +128,7 @@ class AuthIntegrationTests {
                 .andExpect(status().isForbidden());
         Token token = csrf(null);
         signup(token);
-        mvc.perform(post("/api/auth/login").session(token.session())
-                        .header("X-CSRF-TOKEN", token.value())
+        mvc.perform(token.apply(post("/api/auth/login"))
                         .param("email", "member@example.com").param("password", "wrong"))
                 .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").isString());
         mvc.perform(get("/api/auth/me").session(token.session())).andExpect(status().isUnauthorized());
@@ -125,7 +139,7 @@ class AuthIntegrationTests {
         mvc.perform(options("/api/auth/login")
                         .header("Origin", "http://localhost:3000")
                         .header("Access-Control-Request-Method", "POST")
-                        .header("Access-Control-Request-Headers", "content-type,x-csrf-token"))
+                        .header("Access-Control-Request-Headers", "content-type,x-xsrf-token"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
                 .andExpect(header().string("Access-Control-Allow-Credentials", "true"));
