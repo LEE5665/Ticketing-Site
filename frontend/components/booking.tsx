@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { type Performance, type SeatInfo, fetchSeats, won } from "@/lib/performances";
+import { api, ApiError } from "@/lib/api";
+import AccountMenu from "@/components/account-menu";
+import { loadTossPayments, ANONYMOUS } from "@tosspayments/tosspayments-sdk";
+
+const TOSS_CLIENT_KEY = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY ?? "test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm";
 
 export default function Booking({ performance: show }: { performance: Performance }) {
   // 백엔드에서 전달받은 schedules로부터 고유 날짜 목록 추출
@@ -17,6 +22,7 @@ export default function Booking({ performance: show }: { performance: Performanc
   const [seats, setSeats] = useState<string[]>([]);
   const [quantity, setQuantity] = useState(1);
   const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   // 현재 선택된 회차(Schedule)
   const currentSchedule = show.schedules?.find((s) => s.date === date && s.time === time);
@@ -58,13 +64,92 @@ export default function Booking({ performance: show }: { performance: Performanc
     setMessage("");
   }
 
+  async function handleCheckout() {
+    if (!currentSchedule?.id) {
+      setMessage("회차를 먼저 선택해 주세요.");
+      return;
+    }
+
+    let targetSeats = seats;
+    if (!assigned) {
+      const availableSeats = seatList.filter((s) => s.available).slice(0, quantity).map((s) => s.seatNumber);
+      if (availableSeats.length < quantity) {
+        setMessage("남은 티켓 수량이 부족합니다.");
+        return;
+      }
+      targetSeats = availableSeats;
+    }
+
+    if (targetSeats.length === 0) {
+      setMessage("좌석을 선택해 주세요.");
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage("");
+
+    try {
+      // 1. 가예약 생성
+      const res = await api.post(`/api/schedules/${currentSchedule.id}/reservations/simple`, {
+        seatNumbers: targetSeats,
+      });
+      const data = await res.json();
+
+      // 2. 토스페이먼츠 SDK 호출
+      const tossPayments = await loadTossPayments(TOSS_CLIENT_KEY);
+
+      if (TOSS_CLIENT_KEY.startsWith("test_gck_")) {
+        // 토스 공식 문서 공개 키 (결제위젯 / 창형)
+        const widgets = tossPayments.widgets({ customerKey: ANONYMOUS });
+        await widgets.setAmount({ currency: "KRW", value: data.amount });
+        await widgets.requestPaymentWindow({
+          amount: {
+            currency: "KRW",
+            value: data.amount,
+          },
+          orderId: data.orderId,
+          orderName: data.orderName,
+          successUrl: `${window.location.origin}/payments/success`,
+          failUrl: `${window.location.origin}/payments/fail`,
+          customerEmail: data.customerEmail,
+          customerName: data.customerName,
+        });
+      } else {
+        // 개별 연동 키 (test_ck_...)
+        const payment = tossPayments.payment({ customerKey: ANONYMOUS });
+        await payment.requestPayment({
+          method: "CARD",
+          amount: {
+            currency: "KRW",
+            value: data.amount,
+          },
+          orderId: data.orderId,
+          orderName: data.orderName,
+          successUrl: `${window.location.origin}/payments/success`,
+          failUrl: `${window.location.origin}/payments/fail`,
+          customerEmail: data.customerEmail,
+          customerName: data.customerName,
+        });
+      }
+    } catch (error) {
+      console.error("Toss requestPayment error:", error);
+      if (error instanceof ApiError && error.status === 401) {
+        setMessage("로그인이 필요합니다. 상단 우측에서 먼저 로그인해 주세요.");
+      } else {
+        setMessage(error instanceof Error ? error.message : "예매 처리에 실패했습니다.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="home-page">
       <header className="site-header">
         <Link className="brand" href="/">
           TICKET <span>ON</span>
         </Link>
-        <Link href="/login">로그인 ↗</Link>
+        <AccountMenu />
       </header>
       <main className="booking-main">
         <Link className="back-link" href="/">
@@ -218,18 +303,10 @@ export default function Booking({ performance: show }: { performance: Performanc
             </div>
             <button
               className="submit-button"
-              disabled={!count}
-              onClick={() => {
-                if (currentSchedule) {
-                  setMessage(
-                    `회차 #${currentSchedule.id} (${date} ${time})에 [${seats.join(", ")}] 좌석을 선택하셨습니다.`
-                  );
-                } else {
-                  setMessage("선택 내역을 확인했어요.");
-                }
-              }}
+              disabled={!count || submitting}
+              onClick={handleCheckout}
             >
-              선택 내역 확인
+              {submitting ? "결제창 연결 중…" : "토스페이로 결제하기"}
             </button>
             <p className="booking-help">예매 수수료는 포함되지 않은 금액입니다.</p>
             <p className="booking-message" role="status" aria-live="polite">

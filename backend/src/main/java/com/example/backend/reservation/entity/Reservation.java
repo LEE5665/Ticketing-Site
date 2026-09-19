@@ -2,6 +2,7 @@ package com.example.backend.reservation.entity;
 
 import com.example.backend.member.entity.Member;
 import com.example.backend.performance.entity.PerformanceSchedule;
+import com.example.backend.seat.entity.Seat;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -32,6 +33,18 @@ public class Reservation {
     @Column(nullable = false)
     private ReservationStatus status;
 
+    @Column(name = "order_id", nullable = false, unique = true)
+    private String orderId;
+
+    @Column(name = "order_name", nullable = false)
+    private String orderName;
+
+    @Column(name = "payment_key")
+    private String paymentKey;
+
+    @Column(name = "paid_at")
+    private LocalDateTime paidAt;
+
     @Column(nullable = false)
     private int totalAmount;
 
@@ -41,16 +54,25 @@ public class Reservation {
     @OneToMany(mappedBy = "reservation", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ReservationSeat> reservationSeats = new ArrayList<>();
 
-    public Reservation(Member member, PerformanceSchedule schedule, int totalAmount) {
+    public Reservation(Member member, PerformanceSchedule schedule, String orderId, String orderName, int totalAmount) {
         this.member = member;
         this.schedule = schedule;
+        this.orderId = orderId;
+        this.orderName = orderName;
         this.totalAmount = totalAmount;
         this.status = ReservationStatus.PENDING_PAYMENT;
         this.createdAt = LocalDateTime.now();
     }
 
-    public void confirm() {
+    public void addReservationSeat(Seat seat) {
+        ReservationSeat rs = new ReservationSeat(this, seat);
+        this.reservationSeats.add(rs);
+    }
+
+    public void confirm(String paymentKey) {
         this.status = ReservationStatus.CONFIRMED;
+        this.paymentKey = paymentKey;
+        this.paidAt = LocalDateTime.now();
     }
 
     public void cancel() {

@@ -39,6 +39,7 @@ export default function AccountMenu() {
     <nav className="account-nav" aria-label="계정">
       {loading ? <span role="status">확인 중…</span> : member ? <>
         <span className="member-name">{member.name}님</span>
+        <Link href="/my/reservations" className="my-reservations-link">내 예매</Link>
         <button disabled={pending} onClick={logout}>{pending ? "처리 중…" : "로그아웃"}</button>
       </> : <><Link href="/login">로그인</Link><Link href="/signup">회원가입 ↗</Link></>}
     </nav>

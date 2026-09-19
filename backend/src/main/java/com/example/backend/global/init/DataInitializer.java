@@ -1,5 +1,7 @@
 package com.example.backend.global.init;
 
+import com.example.backend.member.entity.Member;
+import com.example.backend.member.repository.MemberRepository;
 import com.example.backend.performance.entity.Performance;
 import com.example.backend.performance.entity.PerformanceSchedule;
 import com.example.backend.performance.repository.PerformanceRepository;
@@ -11,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +30,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class DataInitializer implements CommandLineRunner {
 
+    private final MemberRepository memberRepository;
+    private final PasswordEncoder passwordEncoder;
     private final PerformanceRepository performanceRepository;
     private final PerformanceScheduleRepository scheduleRepository;
     private final SeatRepository seatRepository;
@@ -34,6 +39,11 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        if (memberRepository.count() == 0) {
+            log.info("초기 테스트 회원(user@test.com)을 생성합니다...");
+            memberRepository.save(new Member("테스트유저", "user@test.com", passwordEncoder.encode("password123")));
+        }
+
         if (performanceRepository.count() > 0) {
             log.info("공연 및 좌석 데이터가 이미 존재하므로 초기화를 건너뜁니다.");
             return;
