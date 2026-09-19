@@ -134,18 +134,4 @@ class AuthIntegrationTests {
         mvc.perform(get("/api/auth/me").session(token.session())).andExpect(status().isUnauthorized());
     }
 
-    @Test
-    void allowsOnlyConfiguredFrontendOrigin() throws Exception {
-        mvc.perform(options("/api/auth/login")
-                        .header("Origin", "http://localhost:3000")
-                        .header("Access-Control-Request-Method", "POST")
-                        .header("Access-Control-Request-Headers", "content-type,x-xsrf-token"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:3000"))
-                .andExpect(header().string("Access-Control-Allow-Credentials", "true"));
-        mvc.perform(options("/api/auth/login")
-                        .header("Origin", "https://untrusted.example")
-                        .header("Access-Control-Request-Method", "POST"))
-                .andExpect(status().isForbidden());
-    }
 }

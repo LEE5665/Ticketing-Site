@@ -111,7 +111,6 @@ function SuccessContent() {
           </div>
         ) : confirmed ? (
           <div style={{ textAlign: "center", padding: "40px 20px" }}>
-            <div style={{ fontSize: "3rem", marginBottom: "16px" }}>🎉</div>
             <span
               style={{
                 display: "inline-block",

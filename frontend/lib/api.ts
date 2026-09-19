@@ -1,5 +1,5 @@
-// Browser requests: Spring owns the HttpOnly session cookie.
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// Browser requests: 프록시(Next.js rewrites)를 통해 동일 출처(/api)로 요청 (CORS 불필요)
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -20,7 +20,6 @@ async function send(path: string, init: RequestInit): Promise<Response> {
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...init,
-      credentials: "include",
       cache: "no-store",
     });
   } catch {

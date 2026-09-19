@@ -1,4 +1,8 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  (typeof window === "undefined"
+    ? (process.env.INTERNAL_BACKEND_URL ?? "http://localhost:8080")
+    : "");
 
 export interface Schedule {
   id: number;
