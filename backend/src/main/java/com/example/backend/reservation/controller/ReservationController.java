@@ -48,4 +48,17 @@ public class ReservationController {
         List<MyReservationResponse> myReservations = reservationService.getMyReservations(email);
         return ResponseEntity.ok(myReservations);
     }
+
+    /**
+     * 예매 취소 (결제 전 이탈 또는 취소 시 좌석 선점 해제)
+     */
+    @PostMapping("/api/reservations/{orderId}/cancel")
+    public ResponseEntity<Void> cancelReservation(
+            @PathVariable String orderId,
+            Authentication authentication
+    ) {
+        String email = authentication.getName();
+        reservationService.cancelReservation(email, orderId);
+        return ResponseEntity.noContent().build();
+    }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type Performance, type SeatInfo, fetchSeats, won } from "@/lib/performances";
 import { api, ApiError } from "@/lib/api";
 import AccountMenu from "@/components/account-menu";
@@ -23,6 +23,19 @@ export default function Booking({ performance: show }: { performance: Performanc
   const [quantity, setQuantity] = useState(1);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // 미결제 가예약 번호 추적 및 결제 진행 플래그
+  const pendingOrderIdRef = useRef<string | null>(null);
+  const isPayingRef = useRef(false);
+
+  // 페이지 이탈(뒤로가기, 메인 이동 등) 시 결제 완료되지 않은 가예약 자동 취소
+  useEffect(() => {
+    return () => {
+      if (!isPayingRef.current && pendingOrderIdRef.current) {
+        void api.post(`/api/reservations/${pendingOrderIdRef.current}/cancel`);
+      }
+    };
+  }, []);
 
   // 현재 선택된 회차(Schedule)
   const currentSchedule = show.schedules?.find((s) => s.date === date && s.time === time);
@@ -89,13 +102,15 @@ export default function Booking({ performance: show }: { performance: Performanc
     setMessage("");
 
     try {
-      // 1. 가예약 생성
+      // 1. 가예약 생성 (비관적 락으로 5분 선점)
       const res = await api.post(`/api/schedules/${currentSchedule.id}/reservations/simple`, {
         seatNumbers: targetSeats,
       });
       const data = await res.json();
+      pendingOrderIdRef.current = data.orderId;
 
       // 2. 토스페이먼츠 SDK 호출
+      isPayingRef.current = true;
       const tossPayments = await loadTossPayments(TOSS_CLIENT_KEY);
 
       if (TOSS_CLIENT_KEY.startsWith("test_gck_")) {
@@ -133,6 +148,17 @@ export default function Booking({ performance: show }: { performance: Performanc
       }
     } catch (error) {
       console.error("Toss requestPayment error:", error);
+      isPayingRef.current = false;
+
+      // 결제창 닫기나 에러 발생 시 가예약 즉시 취소 및 좌석 해제
+      if (pendingOrderIdRef.current) {
+        void api.post(`/api/reservations/${pendingOrderIdRef.current}/cancel`);
+        pendingOrderIdRef.current = null;
+        if (currentSchedule?.id) {
+          void fetchSeats(currentSchedule.id).then(setSeatList);
+        }
+      }
+
       if (error instanceof ApiError && error.status === 401) {
         setMessage("로그인이 필요합니다. 상단 우측에서 먼저 로그인해 주세요.");
       } else {

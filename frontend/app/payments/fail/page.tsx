@@ -2,13 +2,21 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
+import { api } from "@/lib/api";
 
 function FailContent() {
   const searchParams = useSearchParams();
   const code = searchParams.get("code");
   const message = searchParams.get("message");
   const orderId = searchParams.get("orderId");
+
+  useEffect(() => {
+    if (orderId) {
+      // 결제 실패/취소로 도착한 경우 백엔드 가예약 즉시 취소 및 좌석 해제
+      void api.post(`/api/reservations/${orderId}/cancel`).catch(console.error);
+    }
+  }, [orderId]);
 
   return (
     <div className="home-page">

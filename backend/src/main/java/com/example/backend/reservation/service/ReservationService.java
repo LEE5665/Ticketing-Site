@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -31,7 +32,7 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
 
     /**
-     * 예매 생성 (가예약)
+     * 예매 생성 (비관적 락으로 좌석 선점 - HOLD 5분)
      */
     @Transactional
     public ReservationResponse createSimpleReservation(String memberEmail, Long scheduleId, List<String> seatNumbers) {
@@ -45,23 +46,35 @@ public class ReservationService {
             throw new IllegalArgumentException("선택된 좌석이 없습니다.");
         }
 
-        List<Seat> seats = new ArrayList<>();
-        for (String seatNumber : seatNumbers) {
-            Seat seat = seatRepository.findByScheduleIdAndSeatNumber(scheduleId, seatNumber)
-                    .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 좌석입니다: " + seatNumber));
+        // 데드락(Deadlock) 방지를 위해 좌석 번호 오름차순 정렬 및 중복 제거
+        List<String> sortedSeatNumbers = seatNumbers.stream().distinct().sorted().toList();
 
-            // 좌석 예매 가능 여부 확인
-            if (seat.getStatus() != SeatStatus.AVAILABLE) {
-                throw new IllegalStateException("이미 예매된 좌석입니다: " + seatNumber);
+        // 1. 비관적 락(SELECT ... FOR UPDATE)으로 좌석들을 일괄 조회
+        List<Seat> seats = seatRepository.findByScheduleIdAndSeatNumberInWithLock(scheduleId, sortedSeatNumbers);
+
+        if (seats.size() != sortedSeatNumbers.size()) {
+            throw new IllegalArgumentException("존재하지 않는 좌석이 포함되어 있습니다.");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        // 2. 각 좌석의 예매 가능 여부 확인 (AVAILABLE 또는 5분 만료된 HOLD인지 체크)
+        for (Seat seat : seats) {
+            if (!seat.isAvailable(now)) {
+                throw new IllegalStateException("이미 선택되었거나 예매된 좌석입니다: " + seat.getSeatNumber());
             }
-            seats.add(seat);
+        }
+
+        // 3. 5분간 좌석 선점(HOLD) 처리
+        LocalDateTime expiresAt = now.plusMinutes(5);
+        for (Seat seat : seats) {
+            seat.hold(expiresAt);
         }
 
         int pricePerSeat = schedule.getPerformance().getPrice();
         int totalAmount = pricePerSeat * seats.size();
 
         String orderId = "ORDER-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
-        String orderName = schedule.getPerformance().getTitle() + " " + seats.size() + "매 (" + String.join(", ", seatNumbers) + ")";
+        String orderName = schedule.getPerformance().getTitle() + " " + seats.size() + "매 (" + String.join(", ", sortedSeatNumbers) + ")";
 
         Reservation reservation = new Reservation(member, schedule, orderId, orderName, totalAmount);
         for (Seat seat : seats) {
@@ -69,10 +82,33 @@ public class ReservationService {
         }
 
         reservationRepository.save(reservation);
-        log.info("[예매 생성 완료] orderId={}, member={}, seats={}, totalAmount={}",
-                orderId, member.getEmail(), seatNumbers, totalAmount);
+        log.info("[예매 생성 및 좌석 선점 완료] orderId={}, member={}, seats={}, totalAmount={}, expiresAt={}",
+                orderId, member.getEmail(), sortedSeatNumbers, totalAmount, expiresAt);
 
         return ReservationResponse.from(reservation);
+    }
+
+    /**
+     * 예매 취소 (사용자 명시적 취소 또는 이탈 시 선점 해제)
+     */
+    @Transactional
+    public void cancelReservation(String memberEmail, String orderId) {
+        Reservation reservation = reservationRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("예매 내역을 찾을 수 없습니다: " + orderId));
+
+        if (!reservation.getMember().getEmail().equals(memberEmail)) {
+            throw new IllegalArgumentException("본인의 예매만 취소할 수 있습니다.");
+        }
+
+        if (reservation.getStatus() == com.example.backend.reservation.entity.ReservationStatus.CONFIRMED) {
+            throw new IllegalStateException("이미 결제 완료된 예매는 일반 취소할 수 없습니다.");
+        }
+
+        reservation.cancel();
+        for (var rs : reservation.getReservationSeats()) {
+            rs.getSeat().release();
+        }
+        log.info("[예매 취소 및 좌석 해제 완료] orderId={}, member={}", orderId, memberEmail);
     }
 
     /**
