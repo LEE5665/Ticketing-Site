@@ -29,6 +29,7 @@ public class SecurityConfig {
 
         http
                 .csrf(csrf -> csrf
+                        .ignoringRequestMatchers("/api/test/**")
                         .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                         .csrfTokenRequestHandler(requestHandler)
                 )
@@ -48,6 +49,7 @@ public class SecurityConfig {
                         .logoutSuccessHandler((request, response, authentication) -> response.setStatus(204))
                 )
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/test/**").permitAll()
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/csrf",
