@@ -136,8 +136,8 @@ public class ReservationService {
 
         log.info("[내 예매 조회 시작] memberId={}", member.getId());
 
-        // 1번 쿼리: reservations 조회
-        List<Reservation> reservations = reservationRepository.findByMemberIdOrderByCreatedAtDesc(member.getId());
+        // Fetch Join을 통해 Schedule, Performance, ReservationSeats, Seat을 한 번의 쿼리로 즉시 조회 (N+1 문제 해결)
+        List<Reservation> reservations = reservationRepository.findWithDetailsByMemberId(member.getId());
 
         // DTO 변환 및 반환
         return reservations.stream()
