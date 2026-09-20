@@ -23,6 +23,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(409).body(new ErrorResponse("이미 등록된 정보와 충돌합니다. 이메일을 확인해 주세요."));
     }
 
+    @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<ErrorResponse> optimisticLockConflict() {
+        return ResponseEntity.status(409).body(new ErrorResponse("동시 요청으로 인해 예매에 실패했습니다. 다시 시도해 주세요."));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> validation(MethodArgumentNotValidException error) {
         String message = error.getBindingResult().getFieldErrors().getFirst().getDefaultMessage();

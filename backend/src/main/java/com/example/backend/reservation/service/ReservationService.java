@@ -49,8 +49,8 @@ public class ReservationService {
         // 데드락(Deadlock) 방지를 위해 좌석 번호 오름차순 정렬 및 중복 제거
         List<String> sortedSeatNumbers = seatNumbers.stream().distinct().sorted().toList();
 
-        // 1. 비관적 락(SELECT ... FOR UPDATE)으로 좌석들을 일괄 조회
-        List<Seat> seats = seatRepository.findByScheduleIdAndSeatNumberInWithLock(scheduleId, sortedSeatNumbers);
+        // 1. 낙관적 락으로 좌석들을 일괄 조회 (SELECT ... FOR UPDATE 없음, Entity의 @Version으로 트랜잭션 커밋 시 충돌 감지)
+        List<Seat> seats = seatRepository.findByScheduleIdAndSeatNumberIn(scheduleId, sortedSeatNumbers);
 
         if (seats.size() != sortedSeatNumbers.size()) {
             throw new IllegalArgumentException("존재하지 않는 좌석이 포함되어 있습니다.");

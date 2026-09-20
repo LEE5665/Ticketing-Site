@@ -31,9 +31,25 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
     );
 
     /**
+     * 낙관적 락 방식으로 좌석들을 조회 (SELECT FOR UPDATE 없이 조회, Entity @Version으로 커밋 시 충돌 감지)
+     */
+    @Query("SELECT s FROM Seat s WHERE s.schedule.id = :scheduleId AND s.seatNumber IN :seatNumbers ORDER BY s.seatNumber ASC")
+    List<Seat> findByScheduleIdAndSeatNumberIn(
+            @Param("scheduleId") Long scheduleId,
+            @Param("seatNumbers") List<String> seatNumbers
+    );
+
+    /**
      * 5분 만료된 HOLD 좌석을 일괄 AVAILABLE로 복구하는 벌크 쿼리
      */
     @Modifying(clearAutomatically = true)
     @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null WHERE s.status = 'HOLD' AND s.holdExpiresAt < :now")
     int releaseExpiredSeats(@Param("now") LocalDateTime now);
+
+    /**
+     * 부하 테스트용: 특정 회차의 모든 좌석을 AVAILABLE로 강제 초기화
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null WHERE s.schedule.id = :scheduleId")
+    int resetAllSeatsByScheduleId(@Param("scheduleId") Long scheduleId);
 }

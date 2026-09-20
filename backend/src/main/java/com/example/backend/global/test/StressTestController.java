@@ -9,6 +9,8 @@ import com.example.backend.reservation.service.ReservationService;
 import com.example.backend.seat.repository.SeatRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import jakarta.persistence.OptimisticLockException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
@@ -56,9 +58,9 @@ public class StressTestController {
                     request.seatNumbers()
             );
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
-        } catch (IllegalStateException e) {
-            // 이미 선점된 좌석이거나 동시성 경합에서 밀린 경우 409 Conflict 반환
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (IllegalStateException | ObjectOptimisticLockingFailureException | OptimisticLockException e) {
+            // 이미 선점된 좌석이거나 동시성(낙관적 락) 경합에서 밀린 경우 409 Conflict 반환
+            return ResponseEntity.status(HttpStatus.CONFLICT).body("이미 선점되었거나 다른 사용자가 먼저 예매 중인 좌석입니다.");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
         }
@@ -70,9 +72,9 @@ public class StressTestController {
     @PostMapping("/reset")
     @Transactional
     public ResponseEntity<String> resetData() {
-        reservationSeatRepository.deleteAll();
-        reservationRepository.deleteAll();
-        seatRepository.releaseExpiredSeats(LocalDateTime.now().plusDays(100)); // 모든 HOLD를 AVAILABLE로 복구
+        reservationSeatRepository.deleteAllInBatch();
+        reservationRepository.deleteAllInBatch();
+        seatRepository.resetAllSeatsByScheduleId(1L); // 1번 스케줄의 모든 좌석을 AVAILABLE로 복구
         log.info("[부하 테스트 데이터 초기화 완료]");
         return ResponseEntity.ok("테스트 데이터가 초기화되었습니다.");
     }
