@@ -45,9 +45,45 @@ class ReservationIntegrationTests {
     @Autowired ReservationRepository reservationRepository;
     @Autowired ReservationSeatRepository reservationSeatRepository;
     @Autowired ReservationService reservationService;
+    @Autowired org.redisson.api.RedissonClient redisson;
 
     private Member member;
     private PerformanceSchedule schedule;
+
+    @Test
+    void redisContentionRejectsBeforeMemberLookupAndReleasesPartialLocks() throws Exception {
+        var held = redisson.getLock("seat:lock:" + schedule.getId() + ":A2");
+        assertThat(held.tryLock()).isTrue();
+        try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            try {
+                executor.submit(() -> {
+                    assertThatThrownBy(() -> reservationService.createSimpleReservation(
+                            "missing@test.com", schedule.getId(), List.of("A1", "A2")))
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("처리 중");
+                }).get(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(redisson.getLock("seat:lock:" + schedule.getId() + ":A1").isLocked()).isFalse();
+                assertThat(held.isHeldByCurrentThread()).isTrue();
+                assertThat(reservationRepository.count()).isZero();
+            } finally {
+                held.unlock();
+            }
+        }
+    }
+
+    @Test
+    void redisLocksAreReleasedAfterCommitAndRollback() {
+        var lock = redisson.getLock("seat:lock:" + schedule.getId() + ":A1");
+        assertThatThrownBy(() -> reservationService.createSimpleReservation(
+                "missing@test.com", schedule.getId(), List.of("A1")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(lock.isLocked()).isFalse();
+        assertThat(reservationRepository.count()).isZero();
+
+        var response = reservationService.createSimpleReservation(member.getEmail(), schedule.getId(), List.of("A1"));
+        assertThat(lock.isLocked()).isFalse();
+        assertThat(reservationRepository.findByOrderId(response.orderId())).isPresent();
+    }
 
     @Test
     void cancellingExpiredReservationDoesNotReleaseNewOwnersHold() {

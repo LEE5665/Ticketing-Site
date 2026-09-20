@@ -9,15 +9,18 @@ import com.example.backend.reservation.dto.ReservationResponse;
 import com.example.backend.reservation.entity.Reservation;
 import com.example.backend.reservation.repository.ReservationRepository;
 import com.example.backend.seat.entity.Seat;
-import com.example.backend.seat.entity.SeatStatus;
+import com.example.backend.seat.service.SeatLockService;
+import com.example.backend.seat.service.SeatConflictException;
 import com.example.backend.seat.repository.SeatRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,12 +33,24 @@ public class ReservationService {
     private final PerformanceScheduleRepository scheduleRepository;
     private final SeatRepository seatRepository;
     private final ReservationRepository reservationRepository;
+    private final SeatLockService seatLockService;
+    private final PlatformTransactionManager transactionManager;
 
     /**
-     * 예매 생성 (비관적 락으로 좌석 선점 - HOLD 5분)
+     * Redis 락 획득 후 DB 트랜잭션을 시작하고 커밋/롤백 완료 후 해제한다.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.NEVER)
     public ReservationResponse createSimpleReservation(String memberEmail, Long scheduleId, List<String> seatNumbers) {
+        if (scheduleId == null || seatNumbers == null || seatNumbers.isEmpty()
+                || seatNumbers.stream().anyMatch(seat -> seat == null || seat.isBlank())) {
+            throw new IllegalArgumentException("회차와 좌석을 지정해야 합니다.");
+        }
+        return seatLockService.withLocks(scheduleId, seatNumbers, () ->
+                new TransactionTemplate(transactionManager).execute(status ->
+                        createReservationInTransaction(memberEmail, scheduleId, seatNumbers)));
+    }
+
+    private ReservationResponse createReservationInTransaction(String memberEmail, Long scheduleId, List<String> seatNumbers) {
         Member member = memberRepository.findByEmail(memberEmail)
                 .orElseThrow(() -> new IllegalArgumentException("회원 정보를 찾을 수 없습니다."));
 
@@ -60,7 +75,7 @@ public class ReservationService {
         // 2. 각 좌석의 예매 가능 여부 확인 (AVAILABLE 또는 5분 만료된 HOLD인지 체크)
         for (Seat seat : seats) {
             if (!seat.isAvailable(now)) {
-                throw new IllegalStateException("이미 선택되었거나 예매된 좌석입니다: " + seat.getSeatNumber());
+                throw new SeatConflictException("이미 선택되었거나 예매된 좌석입니다: " + seat.getSeatNumber());
             }
         }
 

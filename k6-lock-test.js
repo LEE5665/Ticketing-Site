@@ -20,6 +20,10 @@ const BASE_URL = 'http://localhost:8080';
 
 // [1] 테스트 시작 전: 데이터 자동 초기화 (이전 테스트 잔여물 삭제 및 좌석 AVAILABLE 복구)
 export function setup() {
+  const members = http.post(`${BASE_URL}/api/test/members?count=1000`);
+  if (members.status !== 204) {
+    fail(`회원 준비 실패 (${members.status}): ${members.body}`);
+  }
   console.log('--- [Setup] 테스트 데이터 초기화 진행 중... ---');
   const res = http.post(`${BASE_URL}/api/test/reset`);
   if (res.status !== 200) {
@@ -46,6 +50,14 @@ export default function () {
   };
 
   const res = http.post(url, payload, params);
+  if (res.status !== 201 && res.status !== 409) {
+    console.error(JSON.stringify({
+      status: res.status,
+      error: res.error,
+      error_code: res.error_code,
+      body: res.body,
+    }));
+  }
 
   // 결과 검증
       check(res, {

@@ -12,6 +12,16 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 public class GlobalExceptionHandler {
     public record ErrorResponse(String message) {}
 
+    @ExceptionHandler(com.example.backend.seat.service.SeatConflictException.class)
+    public ResponseEntity<ErrorResponse> stateConflict(com.example.backend.seat.service.SeatConflictException error) {
+        return ResponseEntity.status(409).body(new ErrorResponse(error.getMessage()));
+    }
+
+    @ExceptionHandler(org.redisson.client.RedisException.class)
+    public ResponseEntity<ErrorResponse> redisUnavailable() {
+        return ResponseEntity.status(503).body(new ErrorResponse("좌석 잠금 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요."));
+    }
+
     @ExceptionHandler(DuplicateEmailException.class)
     public ResponseEntity<ErrorResponse> duplicate(DuplicateEmailException error) {
         return ResponseEntity.status(409).body(new ErrorResponse(error.getMessage()));

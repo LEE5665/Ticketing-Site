@@ -46,11 +46,6 @@ public class StressTestController {
                 ? request.email()
                 : "user@test.com";
 
-        // 테스트용 회원이 없으면 자동 생성하여 FK 에러 방지
-        memberRepository.findByEmail(email).orElseGet(() ->
-                memberRepository.save(new Member("스트레스유저", email, "password"))
-        );
-
         try {
             ReservationResponse response = reservationService.createSimpleReservation(
                     email,
@@ -61,9 +56,27 @@ public class StressTestController {
         } catch (IllegalStateException | ObjectOptimisticLockingFailureException | OptimisticLockException e) {
             // 이미 선점된 좌석이거나 동시성(낙관적 락) 경합에서 밀린 경우 409 Conflict 반환
             return ResponseEntity.status(HttpStatus.CONFLICT).body("이미 선점되었거나 다른 사용자가 먼저 예매 중인 좌석입니다.");
-        } catch (Exception e) {
+        } catch (org.redisson.client.RedisException e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body("좌석 잠금 서버를 사용할 수 없습니다.");
+        } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
         }
+    }
+
+    // 측정 중 회원 생성/조회가 좌석 락보다 먼저 DB에 접근하지 않도록 준비 단계로 분리한다.
+    @PostMapping("/members")
+    @Transactional
+    public ResponseEntity<Void> prepareMembers(@RequestParam(defaultValue = "1000") int count) {
+        if (count < 1 || count > 10000) {
+            throw new IllegalArgumentException("회원 수는 1~10000 사이여야 합니다.");
+        }
+        for (int i = 1; i <= count; i++) {
+            String email = "stress_user_" + i + "@test.com";
+            if (memberRepository.findByEmail(email).isEmpty()) {
+                memberRepository.save(new Member("스트레스유저", email, "password"));
+            }
+        }
+        return ResponseEntity.noContent().build();
     }
 
     /**
