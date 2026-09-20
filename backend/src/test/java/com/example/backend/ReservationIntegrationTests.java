@@ -8,6 +8,8 @@ import com.example.backend.performance.repository.PerformanceRepository;
 import com.example.backend.performance.repository.PerformanceScheduleRepository;
 import com.example.backend.reservation.repository.ReservationRepository;
 import com.example.backend.reservation.repository.ReservationSeatRepository;
+import com.example.backend.reservation.service.ReservationService;
+import com.example.backend.reservation.entity.ReservationStatus;
 import com.example.backend.seat.entity.Seat;
 import com.example.backend.seat.entity.SeatStatus;
 import com.example.backend.seat.repository.SeatRepository;
@@ -21,8 +23,10 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -40,9 +44,62 @@ class ReservationIntegrationTests {
     @Autowired SeatRepository seatRepository;
     @Autowired ReservationRepository reservationRepository;
     @Autowired ReservationSeatRepository reservationSeatRepository;
+    @Autowired ReservationService reservationService;
 
     private Member member;
     private PerformanceSchedule schedule;
+
+    @Test
+    void cancellingExpiredReservationDoesNotReleaseNewOwnersHold() {
+        var first = reservationService.createSimpleReservation(member.getEmail(), schedule.getId(), List.of("A1", "A2"));
+        var original = reservationRepository.findByOrderId(first.orderId()).orElseThrow();
+        Seat expired = seatRepository.findByScheduleIdAndSeatNumber(schedule.getId(), "A1").orElseThrow();
+        expired.hold(LocalDateTime.now().minusMinutes(1), original.getHoldToken());
+        seatRepository.saveAndFlush(expired);
+
+        Member other = memberRepository.save(new Member("다른 사용자", "other@test.com", "pass"));
+        var second = reservationService.createSimpleReservation(other.getEmail(), schedule.getId(), List.of("A1"));
+        var newOwner = reservationRepository.findByOrderId(second.orderId()).orElseThrow();
+        Seat before = seatRepository.findByScheduleIdAndSeatNumber(schedule.getId(), "A1").orElseThrow();
+        assertThat(newOwner.getHoldToken()).isNotEqualTo(original.getHoldToken());
+
+        reservationService.cancelReservation(member.getEmail(), first.orderId());
+        reservationService.cancelReservation(member.getEmail(), first.orderId());
+
+        Seat after = seatRepository.findById(before.getId()).orElseThrow();
+        assertThat(after.getStatus()).isEqualTo(SeatStatus.HOLD);
+        assertThat(after.getHoldToken()).isEqualTo(newOwner.getHoldToken());
+        assertThat(after.getHoldExpiresAt()).isEqualTo(before.getHoldExpiresAt());
+        assertThat(after.getVersion()).isEqualTo(before.getVersion());
+        assertThat(reservationRepository.findByOrderId(first.orderId()).orElseThrow().getStatus())
+                .isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(reservationRepository.findByOrderId(second.orderId()).orElseThrow().getStatus())
+                .isEqualTo(ReservationStatus.PENDING_PAYMENT);
+        assertThat(seatRepository.findByScheduleIdAndSeatNumber(schedule.getId(), "A2").orElseThrow().getStatus())
+                .isEqualTo(SeatStatus.AVAILABLE);
+    }
+
+    @Test
+    void cancellingOwnedHoldReleasesAllSeatsAndClearsTokens() {
+        var response = reservationService.createSimpleReservation(member.getEmail(), schedule.getId(), List.of("A1", "A2"));
+        String token = reservationRepository.findByOrderId(response.orderId()).orElseThrow().getHoldToken();
+        assertThat(token).isNotBlank();
+        assertThat(seatRepository.findByScheduleIdOrderBySeatNumberAsc(schedule.getId()))
+                .allSatisfy(seat -> assertThat(seat.getHoldToken()).isEqualTo(token));
+
+        assertThatThrownBy(() -> reservationService.cancelReservation("other@test.com", response.orderId()))
+                .isInstanceOf(IllegalArgumentException.class);
+        reservationService.cancelReservation(member.getEmail(), response.orderId());
+
+        assertThat(reservationRepository.findByOrderId(response.orderId()).orElseThrow().getStatus())
+                .isEqualTo(ReservationStatus.CANCELLED);
+        assertThat(seatRepository.findByScheduleIdOrderBySeatNumberAsc(schedule.getId()))
+                .allSatisfy(seat -> {
+                    assertThat(seat.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
+                    assertThat(seat.getHoldToken()).isNull();
+                    assertThat(seat.getHoldExpiresAt()).isNull();
+                });
+    }
 
     @BeforeEach
     void setup() {

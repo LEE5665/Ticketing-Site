@@ -43,13 +43,18 @@ public interface SeatRepository extends JpaRepository<Seat, Long> {
      * 5분 만료된 HOLD 좌석을 일괄 AVAILABLE로 복구하는 벌크 쿼리
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null WHERE s.status = 'HOLD' AND s.holdExpiresAt < :now")
+    @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null, s.holdToken = null, s.version = s.version + 1 WHERE s.status = 'HOLD' AND s.holdExpiresAt < :now")
     int releaseExpiredSeats(@Param("now") LocalDateTime now);
 
     /**
      * 부하 테스트용: 특정 회차의 모든 좌석을 AVAILABLE로 강제 초기화
      */
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null WHERE s.schedule.id = :scheduleId")
+    @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null, s.holdToken = null, s.version = s.version + 1 WHERE s.schedule.id = :scheduleId")
     int resetAllSeatsByScheduleId(@Param("scheduleId") Long scheduleId);
+
+    // 소유권 확인과 해제를 하나의 UPDATE로 처리하고 기존 낙관적 락도 무효화한다.
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Seat s SET s.status = 'AVAILABLE', s.holdExpiresAt = null, s.holdToken = null, s.version = s.version + 1 WHERE s.id = :seatId AND s.status = 'HOLD' AND s.holdToken = :holdToken")
+    int releaseHeldSeat(@Param("seatId") Long seatId, @Param("holdToken") String holdToken);
 }

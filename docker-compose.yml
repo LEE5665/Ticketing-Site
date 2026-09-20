@@ -26,5 +26,15 @@ services:
     depends_on:
       - mariadb
 
+  redis:
+    image: redis:alpine
+    container_name: ticketing-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   mariadb_data:
+  redis_data:

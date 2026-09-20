@@ -38,6 +38,8 @@ public class Seat {
 
     private LocalDateTime holdExpiresAt;
 
+    private String holdToken;
+
     @Version
     private Long version;
 
@@ -57,18 +59,21 @@ public class Seat {
                 && this.holdExpiresAt.isBefore(now);
     }
 
-    public void hold(LocalDateTime expiresAt) {
+    public void hold(LocalDateTime expiresAt, String holdToken) {
         this.status = SeatStatus.HOLD;
         this.holdExpiresAt = expiresAt;
+        this.holdToken = holdToken;
     }
 
     public void reserve() {
         this.status = SeatStatus.RESERVED;
         this.holdExpiresAt = null;
+        this.holdToken = null;
     }
 
     public void release() {
         this.status = SeatStatus.AVAILABLE;
         this.holdExpiresAt = null;
+        this.holdToken = null;
     }
 }

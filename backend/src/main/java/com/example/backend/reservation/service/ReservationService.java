@@ -66,9 +66,6 @@ public class ReservationService {
 
         // 3. 5분간 좌석 선점(HOLD) 처리
         LocalDateTime expiresAt = now.plusMinutes(5);
-        for (Seat seat : seats) {
-            seat.hold(expiresAt);
-        }
 
         int pricePerSeat = schedule.getPerformance().getPrice();
         int totalAmount = pricePerSeat * seats.size();
@@ -78,6 +75,7 @@ public class ReservationService {
 
         Reservation reservation = new Reservation(member, schedule, orderId, orderName, totalAmount);
         for (Seat seat : seats) {
+            seat.hold(expiresAt, reservation.getHoldToken());
             reservation.addReservationSeat(seat);
         }
 
@@ -105,8 +103,10 @@ public class ReservationService {
         }
 
         reservation.cancel();
-        for (var rs : reservation.getReservationSeats()) {
-            rs.getSeat().release();
+        List<Long> seatIds = reservation.getReservationSeats().stream()
+                .map(rs -> rs.getSeat().getId()).distinct().sorted().toList();
+        for (Long seatId : seatIds) {
+            seatRepository.releaseHeldSeat(seatId, reservation.getHoldToken());
         }
         log.info("[예매 취소 및 좌석 해제 완료] orderId={}, member={}", orderId, memberEmail);
     }

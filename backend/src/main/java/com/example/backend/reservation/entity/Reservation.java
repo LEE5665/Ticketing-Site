@@ -10,6 +10,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Entity
 @Getter
@@ -36,6 +37,8 @@ public class Reservation {
     @Column(name = "order_id", nullable = false, unique = true)
     private String orderId;
 
+    private String holdToken;
+
     @Column(name = "order_name", nullable = false)
     private String orderName;
 
@@ -58,6 +61,7 @@ public class Reservation {
         this.member = member;
         this.schedule = schedule;
         this.orderId = orderId;
+        this.holdToken = UUID.randomUUID().toString();
         this.orderName = orderName;
         this.totalAmount = totalAmount;
         this.status = ReservationStatus.PENDING_PAYMENT;
